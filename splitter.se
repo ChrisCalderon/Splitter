@@ -1,0 +1,75 @@
+# -*- mode: python -*-
+
+# An account splitting contract for preventing replay attacks.
+# A replay attack is when a transaction meant for one chain is broadcast
+# to a different chain or chains resulting in funds moving on multiple chains.
+#
+# To use:
+# make a new account with new_account(), which returns an account for this contract.
+# send money to your account on this contract with deposit(myAccount)
+# withdraw all the money to a different address with withdraw(myAccount, new_addr) (this erases the account on this contract, which is fine because all your money if removed first).
+# Now transactions using the funds in new_addr are only valid on one blockchain.
+#
+# This works because the result of the new_account function is different on different forks.
+
+macro set_fork_info():
+    sstore(0, block.prevhash)
+    sstore(1, block.number)
+
+def init():
+    set_fork_info()
+
+def any():
+    # update block hash about once a month.
+    # this should keep the splitter useful in the event of future hard forks.
+    # 1 block every 15s == 4 blk/min
+    #                   == 240 blk/hour
+    #                   == 5760 blk/day
+    #                   == 40320 blk/week
+    #                   == 161280 blk/month
+    if((block.number - sload(1)) >= 161280):
+        set_fork_info()
+
+event account_created(account: indexed)
+event funds_received(amount: indexed, balance: indexed)
+event funds_withdrawn(to: indexed)
+
+def new_account():
+    with account = 0:
+        with account_info = alloc(64):
+            account_info[0] = sload(0)
+            account_info[1] = msg.sender
+            account = sha3(new_addr_info, items=2)
+        if sload(account): # account already created
+            return(0)
+        sstore(account, msg.sender)
+        log(type=account_created, account)
+        return(account)
+
+def get_bal_key(account):
+    with key_info = alloc(64):
+        key_info[0] = account
+        key_info[1] = 'balance'
+        return(sha3(key_info, items=2))
+        
+def deposit(account):
+    if sload(account) != msg.sender: # this stops the transaction on different forks
+        return(0)
+    with amount = msg.value:
+        with bal_key = self.get_bal_key(account):
+            with old_bal = sload(bal_key):
+                with new_bal = old_bal + amount:
+                    sstore(bal_key, new_bal)
+                    log(type=funds_received, amount, new_bal)
+                    return(1)
+
+def withdraw(account, to):
+    if sload(account) != msg.sender:
+        return(0)
+    with bal_key = self.get_bal_key(account):
+        with amount = sload(bal_key):
+            sstore(bal_key, 0)
+            sstore(account, 0)
+            send(0, to, amount)
+            log(type=funds_withdrawn, to)
+            return(1)
