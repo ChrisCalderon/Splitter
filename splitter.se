@@ -1,17 +1,5 @@
 # -*- mode: python -*-
 
-# An account splitting contract for preventing replay attacks.
-# A replay attack is when a transaction meant for one chain is broadcast
-# to a different chain or chains resulting in funds moving on multiple chains.
-#
-# To use:
-# make a new account with new_account(), which returns an account for this contract.
-# send money to your account on this contract with deposit(myAccount)
-# withdraw all the money to a different address with withdraw(myAccount, new_addr) (this erases the account on this contract, which is fine because all your money if removed first).
-# Now transactions using the funds in new_addr are only valid on one blockchain.
-#
-# This works because the result of the new_account function is different on different forks.
-
 macro set_fork_info():
     sstore(0, block.prevhash)
     sstore(1, block.number)
@@ -34,13 +22,16 @@ event account_created(account: indexed)
 event funds_received(amount: indexed, balance: indexed)
 event funds_withdrawn(to: indexed)
 
+def blocks_till_update():
+    return(161280 - (block.number - sload(1)))
+
 def new_account():
     with account = 0:
         with account_info = alloc(64):
             account_info[0] = sload(0)
             account_info[1] = msg.sender
             account = sha3(new_addr_info, items=2)
-        if sload(account): # account already created
+        if sload(account): # account already created, don't waste gas.
             return(0)
         sstore(account, msg.sender)
         log(type=account_created, account)
@@ -51,6 +42,9 @@ def get_bal_key(account):
         key_info[0] = account
         key_info[1] = 'balance'
         return(sha3(key_info, items=2))
+
+def get_balance(account):
+    return(sload(self.get_bal_key(account)))
         
 def deposit(account):
     if sload(account) != msg.sender: # this stops the transaction on different forks
